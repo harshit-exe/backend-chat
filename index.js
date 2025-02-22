@@ -50,9 +50,14 @@ const convertToWav = async (inputFile, outputFile) => {
 
 const generateLipSync = async (wavFile, outputJson) => {
   return new Promise((resolve, reject) => {
-    let rhubarbPath = "./bin/rhubarb.exe" // Default for Linux/Mac
+    let rhubarbPath = path.join(__dirname, "bin", "rhubarb") // Default for Linux
     if (os.platform() === "win32") {
       rhubarbPath = path.join(__dirname, "bin", "rhubarb.exe") // Use .exe on Windows
+    }
+
+    // Ensure executable permissions on Linux
+    if (os.platform() !== "win32") {
+      fs.chmodSync(rhubarbPath, 0o755) // Grant execute permission
     }
 
     const command = `"${rhubarbPath}" -f json -o "${outputJson}" "${wavFile}" -r phonetic`
