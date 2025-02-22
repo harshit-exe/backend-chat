@@ -50,7 +50,7 @@ const convertToWav = async (inputFile, outputFile) => {
 
 const generateLipSync = async (wavFile, outputJson) => {
   return new Promise((resolve, reject) => {
-    let rhubarbPath = "./bin/rhubarb" // Default for Linux/Mac
+    let rhubarbPath = "./bin/rhubarb.exe" // Default for Linux/Mac
     if (os.platform() === "win32") {
       rhubarbPath = path.join(__dirname, "bin", "rhubarb.exe") // Use .exe on Windows
     }
