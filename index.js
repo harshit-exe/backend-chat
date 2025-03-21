@@ -1,16 +1,16 @@
-import cors from "cors"
-import dotenv from "dotenv"
-import express from "express"
-import { promises as fsPromises } from "fs"
-import fs from "fs"
-import Groq from "groq-sdk"
-import { exec } from "child_process"
-import ffmpeg from "@ffmpeg-installer/ffmpeg"
-import path from "path"
-import os from "os"
-import { fileURLToPath } from "url"
-import axios from "axios"
-import crypto from "crypto"
+import cors from "cors";
+import dotenv from "dotenv";
+import express from "express";
+import { promises as fsPromises } from "fs";
+import fs from "fs";
+import Groq from "groq-sdk";
+import { exec } from "child_process";
+import path from "path";
+import os from "os";
+import { fileURLToPath } from "url";
+import axios from "axios";
+import crypto from "crypto";
+import ffmpeg from "@ffmpeg-installer/ffmpeg";
 
 dotenv.config()
 
@@ -23,100 +23,105 @@ const groq = new Groq({
 
 const voiceRSSApiKey = "b30d60adb1d4469f913533e80b11701f" // Replace with your VoiceRSS API key
 
-const app = express()
-app.use(express.json())
-app.use(cors())
-const port = 4000
+const app = express();
+app.use(express.json());
+app.use(cors());
+const port = process.env.PORT || 4000; // Use Railway port if available
 
 // Audio cache
-const audioCache = new Map()
+const audioCache = new Map();
+
+// FFmpeg Path: Use system-installed FFmpeg on Railway, fallback to @ffmpeg-installer for local
+const ffmpegPath = process.env.FFMPEG_PATH || ffmpeg.path;
 
 app.get("/", (req, res) => {
-  res.send("Hello World!")
-})
+  res.send("Hello World!");
+});
 
 const convertToWav = async (inputFile, outputFile) => {
   return new Promise((resolve, reject) => {
-    exec(`${ffmpeg.path} -y -i ${inputFile} -ar 16000 -ac 1 ${outputFile}`, (error) => {
+    const inputPath = `"${inputFile}"`;  // Explicitly wrap paths in quotes
+    const outputPath = `"${outputFile}"`;  
+
+    exec(`${ffmpeg.path} -y -i ${inputPath} -ar 16000 -ac 1 ${outputPath}`, (error) => {
       if (error) {
-        console.error("FFmpeg error:", error)
-        return reject(error)
+        console.error("FFmpeg error:", error);
+        return reject(error);
       }
-      console.log(`Converted ${inputFile} to ${outputFile}`)
-      resolve()
-    })
-  })
-}
+      console.log(`Converted ${inputFile} to ${outputFile}`);
+      resolve();
+    });
+  });
+};
+
 
 const generateLipSync = async (wavFile, outputJson) => {
   return new Promise((resolve, reject) => {
-    let rhubarbPath = path.join(__dirname, "bin", "rhubarb") // Default for Linux
+    let rhubarbPath = path.join(__dirname, "bin", "rhubarb");
     if (os.platform() === "win32") {
-      rhubarbPath = path.join(__dirname, "bin", "rhubarb.exe") // Use .exe on Windows
+      rhubarbPath = path.join(__dirname, "bin", "rhubarb.exe");
     }
 
-    // Ensure executable permissions on Linux
     if (os.platform() !== "win32") {
-      fs.chmodSync(rhubarbPath, 0o755) // Grant execute permission
+      fs.chmodSync(rhubarbPath, 0o755); // Grant execute permission on Linux
     }
 
-    const command = `"${rhubarbPath}" -f json -o "${outputJson}" "${wavFile}" -r phonetic`
+    const command = `"${rhubarbPath}" -f json -o "${outputJson}" "${wavFile}" -r phonetic`;
 
     exec(command, (error) => {
       if (error) {
-        console.error("Rhubarb error:", error)
-        return reject(error)
+        console.error("Rhubarb error:", error);
+        return reject(error);
       }
-      console.log(`Lip sync JSON generated: ${outputJson}`)
-      resolve()
-    })
-  })
-}
+      console.log(`Lip sync JSON generated: ${outputJson}`);
+      resolve();
+    });
+  });
+};
 
 const generateAudio = async (text, outputFile) => {
-  const cacheKey = crypto.createHash("md5").update(text).digest("hex")
+  const cacheKey = crypto.createHash("md5").update(text).digest("hex");
 
   if (audioCache.has(cacheKey)) {
-    await fsPromises.copyFile(audioCache.get(cacheKey), outputFile)
-    return
+    await fsPromises.copyFile(audioCache.get(cacheKey), outputFile);
+    return;
   }
 
-  // Using 'en-us' (American English) with 'Amy' voice, and increased speech rate
-  const url = `http://api.voicerss.org/?key=${voiceRSSApiKey}&hl=en-us&v=Amy&r=0&c=MP3&f=44khz_16bit_stereo&src=${encodeURIComponent(text)}`
+  const url = `http://api.voicerss.org/?key=${voiceRSSApiKey}&hl=en-us&v=Amy&r=0&c=MP3&f=44khz_16bit_stereo&src=${encodeURIComponent(text)}`;
 
   const response = await axios({
     method: "get",
     url: url,
     responseType: "stream",
-  })
+  });
 
-  const writer = fs.createWriteStream(outputFile)
-  response.data.pipe(writer)
+  const writer = fs.createWriteStream(outputFile);
+  response.data.pipe(writer);
 
   await new Promise((resolve, reject) => {
-    writer.on("finish", resolve)
-    writer.on("error", reject)
-  })
+    writer.on("finish", resolve);
+    writer.on("error", reject);
+  });
 
-  audioCache.set(cacheKey, outputFile)
-}
+  audioCache.set(cacheKey, outputFile);
+};
 
 app.post("/chat", async (req, res) => {
-  const userMessage = req.body.message
+  const userMessage = req.body.message;
   if (!userMessage) {
     res.send({
       messages: [
         {
           text: "Hello! I'm your coding tutor. What programming topic would you like to learn about?",
-          audio: await audioFileToBase64("audios/intro_0.wav"),
-          lipsync: await readJsonTranscript("audios/intro_0.json"),
+          audio: await audioFileToBase64(path.join(__dirname, "audios", "intro_0.wav")),
+          lipsync: await readJsonTranscript(path.join(__dirname, "audios", "intro_0.json")),
           facialExpression: "smile",
           animation: "Talking_1",
         },
       ],
       tutorResponse: null,
-    })
-    return
+    });
+    return;
   }
 
   const completion = await groq.chat.completions.create({
@@ -156,40 +161,39 @@ app.post("/chat", async (req, res) => {
       },
     ],
     model: "mixtral-8x7b-32768",
-    temperature: 0.8, // Increased from 0.6 to 0.8 for faster responses
-  })
+    temperature: 0.8,
+  });
 
-  const response = JSON.parse(completion.choices[0].message.content)
+  const response = JSON.parse(completion.choices[0].message.content);
 
   for (let i = 0; i < response.messages.length; i++) {
-    const message = response.messages[i]
-    const fileNameMp3 = `audios/message_${i}.mp3`
-    const fileNameWav = `audios/message_${i}.wav`
-    const fileNameJson = `audios/message_${i}.json`
-    const textInput = message.text
+    const message = response.messages[i];
+    const fileNameMp3 = path.join(__dirname, "audios", `message_${i}.mp3`);
+    const fileNameWav = path.join(__dirname, "audios", `message_${i}.wav`);
+    const fileNameJson = path.join(__dirname, "audios", `message_${i}.json`);
+    const textInput = message.text;
 
-    await generateAudio(textInput, fileNameMp3)
-    await convertToWav(fileNameMp3, fileNameWav)
-    await generateLipSync(fileNameWav, fileNameJson)
+    await generateAudio(textInput, fileNameMp3);
+    await convertToWav(fileNameMp3, fileNameWav);
+    await generateLipSync(fileNameWav, fileNameJson);
 
-    message.audio = await audioFileToBase64(fileNameWav)
-    message.lipsync = await readJsonTranscript(fileNameJson)
+    message.audio = await audioFileToBase64(fileNameWav);
+    message.lipsync = await readJsonTranscript(fileNameJson);
   }
 
-  res.send(response)
-})
+  res.send(response);
+});
 
 const readJsonTranscript = async (file) => {
-  const data = await fsPromises.readFile(file, "utf8")
-  return JSON.parse(data)
-}
+  const data = await fsPromises.readFile(file, "utf8");
+  return JSON.parse(data);
+};
 
 const audioFileToBase64 = async (file) => {
-  const data = await fsPromises.readFile(file)
-  return data.toString("base64")
-}
+  const data = await fsPromises.readFile(file);
+  return data.toString("base64");
+};
 
 app.listen(port, () => {
-  console.log(`Virtual Tutor listening on port ${port}`)
-})
-
+  console.log(`Virtual Tutor listening on port ${port}`);
+});
